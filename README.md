@@ -1,0 +1,2 @@
+# szkdcm
+My DICOM utility
