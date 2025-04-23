@@ -57,9 +57,12 @@ impl std::str::FromStr for TagExt {
     }
 }
 
-fn dump_tags<'a>(input: &PathBuf, tags: &'a [Tag]) -> HashMap<&'a Tag, String> {
+fn dump_tags<'a>(input: &PathBuf, read_until: Tag, tags: &'a [Tag]) -> HashMap<&'a Tag, String> {
     let open_options = dicom_object::OpenFileOptions::new();
-    let reader = open_options.open_file(input).unwrap();
+    let reader = open_options
+        .read_until(read_until)
+        .open_file(input)
+        .unwrap();
     let mut map = HashMap::new();
     for tag in tags {
         let elm = reader.get(*tag);
@@ -132,13 +135,6 @@ fn main() -> Result<()> {
 
     info!("Found {} files to process", filenames.len());
 
-    // let mut maps = Vec::new();
-    // for input in filenames {
-    //     info!("Processing file: {:?}", input);
-    //     let map = dump_tags(&input, &tags);
-    //     maps.push((input, map));
-    // }
-
     if let Some(jobs) = args.jobs {
         rayon::ThreadPoolBuilder::new()
             .num_threads(jobs)
@@ -151,7 +147,7 @@ fn main() -> Result<()> {
         .par_iter()
         .map(|input| {
             info!("Processing file: {:?}", input);
-            let map = dump_tags(input, &tags);
+            let map = dump_tags(input, read_until, &tags);
             (input.clone(), map)
         })
         .collect();
