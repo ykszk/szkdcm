@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, ValueHint};
 use dicom_core::{DataDictionary, Tag, dictionary::DataDictionaryEntry};
 use dicom_object::StandardDataDictionary;
@@ -124,8 +124,10 @@ fn main() -> Result<()> {
                     filenames.push(path);
                 }
             }
-        } else {
+        } else if input.is_file() {
             filenames.push(input);
+        } else {
+            bail!("Invalid input: {:?}", input);
         }
     }
     if filenames.is_empty() {
