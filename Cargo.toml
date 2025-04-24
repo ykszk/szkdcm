@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.98"
 clap = { version = "4.5.37", features = ["derive"] }
+clap_complete = "4.5.47"
 csv = "1.3.1"
 dicom-core = "0.8.1"
 dicom-dictionary-std = "0.8.0"

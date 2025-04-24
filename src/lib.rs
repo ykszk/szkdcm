@@ -1,5 +1,7 @@
 use anyhow::{Result, bail};
-use clap::{Parser, ValueHint};
+use clap::{CommandFactory, Parser, ValueHint};
+use clap_complete::Shell;
+use clap_complete::{Generator, generate};
 use dicom_core::{DataDictionary, Tag, dictionary::DataDictionaryEntry};
 use dicom_object::StandardDataDictionary;
 use log::{debug, info};
@@ -24,7 +26,7 @@ pub struct Args {
     pub tag_file: Vec<PathBuf>,
 
     /// Read until the specified tag
-    #[clap(long="until", default_value = "PixelData")]
+    #[clap(long = "until", default_value = "PixelData")]
     pub read_until: String,
 
     /// The number of threads to use
@@ -34,6 +36,10 @@ pub struct Args {
     /// Output file to write to
     #[clap(last=true, value_hint = ValueHint::FilePath)]
     pub output: Option<PathBuf>,
+
+    /// Generate shell completions
+    #[clap(long)]
+    pub complete: Option<Shell>,
 }
 
 /// A tag extension for parsing
@@ -82,9 +88,9 @@ fn dump_tags<'a>(input: &PathBuf, read_until: Tag, tags: &'a [Tag]) -> HashMap<&
     let mut map = HashMap::new();
     for tag in tags {
         let elm = reader.get(*tag);
-        let value = elm.map(|e| {
-           e.to_str().unwrap_or_default().to_string()
-        }).unwrap_or_default();
+        let value = elm
+            .map(|e| e.to_str().unwrap_or_default().to_string())
+            .unwrap_or_default();
         debug!("Tag: {tag:?} Value: {}", value);
         map.insert(tag, value);
     }
@@ -98,7 +104,21 @@ fn tag_to_alias(tag: Tag) -> String {
         .unwrap_or(tag.to_string())
 }
 
+fn print_completions<G: Generator>(generator: G, cmd: &mut clap::Command) {
+    generate(
+        generator,
+        cmd,
+        cmd.get_name().to_string(),
+        &mut std::io::stdout(),
+    );
+}
+
 pub fn main(args: Args) -> Result<()> {
+    if let Some(shell) = args.complete {
+        let mut cmd = Args::command();
+        print_completions(shell, &mut cmd);
+        return Ok(());
+    }
     let read_until = args.read_until.parse::<TagExt>()?.0;
     info!("Read until tag: {:?}", read_until);
     let tags: Result<Vec<_>> = args
