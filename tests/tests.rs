@@ -60,7 +60,7 @@ fn test_multiple_files() -> Result<()> {
         read_until: "PixelData".to_string(),
         tag_file: vec![],
         output: Some(output.clone()),
-        jobs: Some(2),
+        jobs: None,
         complete: None,
     };
 
