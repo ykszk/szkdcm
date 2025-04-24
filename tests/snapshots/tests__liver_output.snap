@@ -1,0 +1,6 @@
+---
+source: tests/tests.rs
+expression: content
+---
+FileName,PatientName,PatientID,PixelSpacing,ImagerPixelSpacing
+liver.dcm,JANCT000,99000,,

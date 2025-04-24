@@ -1,0 +1,6 @@
+---
+source: tests/tests.rs
+expression: content
+---
+FileName,Modality,StudyDate,SeriesDescription
+MR_small.dcm,MR,20040826,

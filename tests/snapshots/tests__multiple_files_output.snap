@@ -1,0 +1,7 @@
+---
+source: tests/tests.rs
+expression: content
+---
+FileName,Modality,PatientID,PixelSpacing,ImagerPixelSpacing
+liver.dcm,SEG,99000,,
+CT_small.dcm,CT,1CT1,0.661468\0.661468,
