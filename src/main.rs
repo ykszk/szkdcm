@@ -7,6 +7,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Dump DICOM tags to CSV
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -23,7 +24,7 @@ struct Args {
     tag_file: Vec<PathBuf>,
 
     /// Read until the specified tag
-    #[clap(long, default_value = "PixelData")]
+    #[clap(long="until", default_value = "PixelData")]
     read_until: String,
 
     /// The number of threads to use
@@ -114,6 +115,11 @@ fn main() -> Result<()> {
         }
     }
 
+    if tags.is_empty() {
+        eprintln!("No tags specified");
+        return Ok(());
+    }
+
     let mut filenames = Vec::new();
     for input in args.input {
         if input.is_dir() {
@@ -146,11 +152,11 @@ fn main() -> Result<()> {
 
     // use rayon for parallel processing
     let maps: Vec<_> = filenames
-        .par_iter()
+        .into_par_iter()
         .map(|input| {
             info!("Processing file: {:?}", input);
-            let map = dump_tags(input, read_until, &tags);
-            (input.clone(), map)
+            let map = dump_tags(&input, read_until, &tags);
+            (input, map)
         })
         .collect();
     info!("Finished processing files");
@@ -176,4 +182,27 @@ fn main() -> Result<()> {
     }
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dicom_core::Tag;
+
+    #[test]
+    fn test_tag_to_alias() {
+        let tag = Tag(0x0010, 0x0010);
+        let alias = tag_to_alias(tag);
+        assert_eq!(alias, "PatientName");
+    }
+
+    #[test]
+    fn test_tag_ext_from_str() {
+        let tag_str = "0010,0010";
+        let tag_ext: TagExt = tag_str.parse().unwrap();
+        assert_eq!(tag_ext.0, Tag(0x0010, 0x0010));
+        let tag_str = "PatientName";
+        let tag_ext: TagExt = tag_str.parse().unwrap();
+        assert_eq!(tag_ext.0, Tag(0x0010, 0x0010));
+    }
 }
