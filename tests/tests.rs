@@ -24,8 +24,11 @@ fn test_dump() -> Result<()> {
             read_until: "PixelData".to_string(),
             tag_file: vec![],
             output: Some(output.clone()),
+            recursive: false,
+            archive: false,
             jobs: None,
             complete: None,
+            file_path: szkdcm::FilePath::Name,
         };
         let result = szkdcm::main(args);
         result.unwrap();
@@ -60,8 +63,11 @@ fn test_multiple_files() -> Result<()> {
         read_until: "PixelData".to_string(),
         tag_file: vec![],
         output: Some(output.clone()),
+        recursive: false,
+        archive: false,
         jobs: None,
         complete: None,
+        file_path: szkdcm::FilePath::Name,
     };
 
     szkdcm::main(args)?;

@@ -6,11 +6,22 @@ use dicom_core::{DataDictionary, Tag, dictionary::DataDictionaryEntry};
 use dicom_object::StandardDataDictionary;
 use log::{debug, info};
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum FilePath {
+    /// Absolute path
+    Absolute,
+    /// Relative to the specified input directory
+    Relative,
+    /// Basename only
+    Name,
+}
+
 /// Dump DICOM tags to CSV
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
     /// Input file to process
@@ -36,6 +47,18 @@ pub struct Args {
     /// Output file to write to
     #[clap(last=true, value_hint = ValueHint::FilePath)]
     pub output: Option<PathBuf>,
+
+    /// Recursively search for DICOM files in the specified directory
+    #[clap(short, long)]
+    pub recursive: bool,
+
+    /// Load from archive file (e.g. zip)
+    #[clap(long)]
+    pub archive: bool,
+
+    /// Specify how to display file paths
+    #[clap(long, default_value = "relative", value_enum)]
+    pub file_path: FilePath,
 
     /// Generate shell completions
     #[clap(long)]
@@ -79,12 +102,23 @@ impl std::str::FromStr for TagExt {
     }
 }
 
-fn dump_tags<'a>(input: &PathBuf, read_until: Tag, tags: &'a [Tag]) -> HashMap<&'a Tag, String> {
+fn dump_tags_from_file<'a>(
+    input: &PathBuf,
+    read_until: Tag,
+    tags: &'a [Tag],
+) -> HashMap<&'a Tag, String> {
     let open_options = dicom_object::OpenFileOptions::new();
     let reader = open_options
         .read_until(read_until)
         .open_file(input)
         .unwrap();
+    dump_tags(tags, reader)
+}
+
+fn dump_tags(
+    tags: &[Tag],
+    reader: dicom_object::FileDicomObject<dicom_object::InMemDicomObject>,
+) -> HashMap<&Tag, String> {
     let mut map = HashMap::new();
     for tag in tags {
         let elm = reader.get(*tag);
@@ -150,28 +184,54 @@ pub fn main(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let mut filenames = Vec::new();
-    for input in args.input {
+    let mut file_paths = Vec::new();
+    let canonical_inputs = args
+        .input
+        .iter()
+        .map(|input| input.canonicalize().unwrap())
+        .collect::<Vec<_>>();
+    for input in canonical_inputs.iter() {
         if input.is_dir() {
-            for entry in std::fs::read_dir(input)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() && path.extension().is_some_and(|ext| ext == "dcm") {
-                    filenames.push(path);
+            if args.recursive {
+                for entry in walkdir::WalkDir::new(input) {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_file()
+                        && path
+                            .extension()
+                            .is_some_and(|ext| ext == "dcm" || (args.archive && ext == "zip"))
+                    {
+                        file_paths.push((Cow::Borrowed(input), path.to_path_buf()));
+                    }
+                }
+            } else {
+                for entry in std::fs::read_dir(input)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_file()
+                        && path
+                            .extension()
+                            .is_some_and(|ext| ext == "dcm" || (args.archive && ext == "zip"))
+                    {
+                        file_paths.push((Cow::Borrowed(input), path.to_path_buf()));
+                    }
                 }
             }
         } else if input.is_file() {
-            filenames.push(input);
+            file_paths.push((
+                Cow::Owned(input.parent().unwrap().to_path_buf()),
+                input.clone(),
+            ));
         } else {
             bail!("Invalid input: {:?}", input);
         }
     }
-    if filenames.is_empty() {
+    if file_paths.is_empty() {
         eprintln!("No dicom files found");
         return Ok(());
     }
 
-    info!("Found {} files to process", filenames.len());
+    info!("Found {} files to process", file_paths.len());
 
     if let Some(jobs) = args.jobs {
         rayon::ThreadPoolBuilder::new()
@@ -181,15 +241,44 @@ pub fn main(args: Args) -> Result<()> {
     }
 
     // use rayon for parallel processing
-    let maps: Vec<_> = filenames
+    let maps: Result<Vec<_>> = file_paths
         .into_par_iter()
-        .map(|input| {
-            info!("Processing file: {:?}", input);
-            let map = dump_tags(&input, read_until, &tags);
-            (input, map)
+        .map(|(input, path)| {
+            info!("Processing file: {:?}", path);
+            if path.extension().is_some_and(|ext| ext == "zip") {
+                let mut reader = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+                let mut results = Vec::new();
+                for i in 0..reader.len() {
+                    let mut file = reader.by_index(i)?;
+                    debug!("Extracting file: {}", file.name());
+                    if file.name().ends_with(".dcm") {
+                        let mut buffer = Vec::new();
+                        std::io::copy(&mut file, &mut buffer)?;
+                        let cursor = std::io::Cursor::new(buffer);
+                        let open_options = dicom_object::OpenFileOptions::new();
+                        let reader = open_options
+                            .read_until(read_until)
+                            .from_reader(cursor)
+                            .unwrap();
+                        let map = dump_tags(&tags, reader);
+                        // use the zip file name + the internal file name as the key
+                        let mut filepath = path.clone();
+                        debug!("File in zip {:?}: {}", filepath, file.name());
+                        filepath.push(file.name());
+                        debug!("Input path for zip file: {:?}", filepath);
+                        results.push((input.clone(), filepath, map));
+                    }
+                }
+                Ok(results)
+            } else {
+                let map = dump_tags_from_file(&path, read_until, &tags);
+                Ok(vec![(input, path, map)])
+            }
         })
         .collect();
+    let maps: Vec<_> = maps?;
     info!("Finished processing files");
+    let maps: Vec<_> = maps.into_iter().flatten().collect();
 
     // write as csv
     let mut writer = {
@@ -204,10 +293,19 @@ pub fn main(args: Args) -> Result<()> {
     let mut header = vec!["FileName".to_string()];
     header.extend(tags.iter().map(|tag| tag_to_alias(*tag)));
     writer.write_record(&header)?;
-    for (input, map) in maps {
+    for (input, path, map) in maps {
         let mut row = Vec::with_capacity(header.len() + 1);
-        let file_name = input.file_name().unwrap().to_str().unwrap();
-        row.push(file_name);
+        match args.file_path {
+            FilePath::Absolute => row.push(path.to_str().unwrap()),
+            FilePath::Relative => {
+                let relative_path = path.strip_prefix(input.as_ref()).unwrap_or(&path);
+                row.push(relative_path.to_str().unwrap());
+            }
+            FilePath::Name => {
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+                row.push(file_name);
+            }
+        }
         for tag in &tags {
             let value = map.get(tag);
             if let Some(value) = value {
